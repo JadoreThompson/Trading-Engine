@@ -1,18 +1,15 @@
 import json
-import random
+import asyncio
 import threading
-from typing import List, Set
-
+from typing import List
 from sqlalchemy import select, update, delete
 
-from config import REDIS_CLIENT
 # Local
-from db_models import Orders, Users
-from enums import OrderType, MarketSide, Topic
+from db_models import Orders
+from config import REDIS_CLIENT
+from enums import MarketSide, Topic
 from models import TradeUpdate
 from utils import get_session
-
-import asyncio
 
 
 class TradeManager:
@@ -20,14 +17,12 @@ class TradeManager:
         self.is_active = True
         self.quotes: dict[str, float] = {}
         self.active_trades: List[Orders] = []
-        # self.active_trades: Set[Orders] = set()
-        # self.active_channels: Set[str] = set()
         self.active_channels: list[str] = []
         self.pubsub = REDIS_CLIENT.pubsub()
 
     async def get_active_trades(self):
         """
-        Retrieves all active trades in sel
+        Retrieves all trades with is_active = True and begins the tracking process
         :return:
         """
         async with get_session() as session:
@@ -39,13 +34,16 @@ class TradeManager:
                     for trade in self.active_trades:
                         asyncio.create_task(self.manage_trade(trade))
                         await asyncio.sleep(1)
-                    # del trades
             except Exception as e:
                 print(type(e), str(e))
-                print('caught 2')
-
+                raise
 
     async def process_trades(self, trades):
+        """
+        Subscribes to pubsub channel, see price_scanner to understand
+        :param trades:
+        :return:
+        """
         try:
             for trade in trades:
                 if trade not in self.active_trades:
@@ -56,29 +54,33 @@ class TradeManager:
                     self.pubsub.subscribe(trade.ticker)
         except Exception as e:
             print(type(e), str(e))
-            print('caught')
-        finally:
-            return
+            raise
 
 
     async def listen_for_message(self):
+        """
+        Listens to pubsub container ticker prices and uploads
+        price changes to quotes[dict] for lookup
+        :return:
+        """
         await asyncio.sleep(1)
         while self.is_active:
             for m in self.pubsub.listen():
                 if m and m.get('type', None) == 'message':
                     self.quotes[m.get('channel', None).decode('utf-8')] = float(m.get('data', None).decode())
-                    # print("*\n" * 10 ** 2)
-                    # print(m)
-                    # print("*\n" * 10 ** 2)
-                    # print(self.quotes)
 
 
     async def manage_trade(self, trade: Orders):
-        """Manage individual trade lifecycle"""
+        """
+        Manage individual trade lifecycle
+        - Tracks unrealised, stop loss and take profit. Closing
+            if either stop loss, take profit or unrealised pnl is the negated
+            of the initial dollar_amount (money put on trade)
+        """
+
         try:
             # Initialising properties in memory
             channel_name = f"{trade.user_id}-trades"
-            print(channel_name)
 
             ticker = trade.ticker
             dollar_amount = trade.dollar_amount
@@ -130,9 +132,7 @@ class TradeManager:
 
                 if trade in self.active_trades:
                     self.active_trades.remove(trade)
-                    await session.execute(delete(Orders).where(Orders.trade_id == trade.trade_id))
-                    await session.commit()
-
+                    await self.close_trade(trade)
                     REDIS_CLIENT.publish(
                         channel=channel_name, message=json.dumps(TradeUpdate(
                             topic=Topic.CLOSE, order_id=str(trade.trade_id)
@@ -140,14 +140,19 @@ class TradeManager:
                     )
         except Exception as e:
             print(f"Error managing trade {trade.trade_id}: {e}")
-            print("-" * 30)
+            raise
 
 
     async def close_trade(self, trade):
+        """
+        Updates all altered fields from trade and sets is_active to False
+        :param trade:
+        :return:
+        """
         async with get_session() as session:
             await session.execute(
                 update(Orders).where(Orders.trade_id == trade.trade_id)
-                .values(**trade)
+                .values(**{k: v for k, v in vars(trade).items() if k != '_sa_instance_state'})
             )
             await session.commit()
 
@@ -172,15 +177,6 @@ def run2():
     loop.run_until_complete(bridge2())
 
 
-# async def main():
-#     tasks = [
-#         asyncio.create_task(manager.get_active_trades()),
-#         # asyncio.create_task(manager.listen_for_message()),
-#     ]
-#     await asyncio.gather(*tasks)
-
-
-
 if __name__ == "__main__":
     thread1 = threading.Thread(target=run, daemon=True)
     thread2 = threading.Thread(target=run2, daemon=True)
@@ -190,6 +186,3 @@ if __name__ == "__main__":
 
     thread1.join()
     thread2.join()
-
-    # import asyncio
-    # asyncio.run(main())

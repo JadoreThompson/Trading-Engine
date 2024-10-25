@@ -2,27 +2,27 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 import argon2.exceptions
-from sqlalchemy import insert, delete, distinct, select, update
+from sqlalchemy import insert, select, update
 
 # FA
-import starlette.websockets
-import uvicorn.protocols.utils
 from fastapi import WebSocket
-from pydantic_core import ValidationError
 import pydantic_core
-# from pydantic import ValidationError
 
 # Local
 from config import API_KEY_ALIAS, REDIS_CLIENT
 from db_models import Orders
 from enums import OrderType
 from exceptions import DoesNotExist, NotSupplied
-from models import CreateTradeRequest, MarketOrder, BuyLimit, SellLimit
+from models import CreateTradeRequest, MarketOrder
 from utils import get_user, get_session
 
 
 @asynccontextmanager
 async def websocket_exception_handler(websocket: WebSocket):
+    """
+    Handler for any exceptions that occur during operation
+    much like the add_exception_handler decorator from FastAPI
+    """
     try:
         yield websocket
     except Exception as e:
@@ -66,6 +66,9 @@ class ConnectionManager:
 
 
     async def ping(self):
+        """
+        Pings client to keep connection alive during times of no sendouts
+        """
         async with websocket_exception_handler(self.socket) as socket:
             while True:
                 await asyncio.sleep(5)
@@ -90,6 +93,11 @@ class ConnectionManager:
 
 
     async def process_order(self, data):
+        """
+        Cleans the incoming create order request and funnels it's properties
+        :param data:
+        :return:
+        """
         async with websocket_exception_handler(self.socket) as socket:
             order = CreateTradeRequest(**data)
             order_type = order.type
@@ -104,6 +112,13 @@ class ConnectionManager:
             asyncio.create_task(self.create_trade(details, socket, order_type))
 
     async def create_trade(self, data, socket, order_type):
+        """
+        Creates a row in the Orders Table
+        :param data:
+        :param socket:
+        :param order_type:
+        :return:
+        """
         async with get_session() as session:
             order = await session.execute(insert(Orders)
             .values(
@@ -115,7 +130,13 @@ class ConnectionManager:
             await session.commit()
         await socket.send_text(json.dumps({'m': 'Order created successfully', 'oi': order_id}))
 
-    async def close_trade(self, data):
+
+    async def close_trade(self, data: dict):
+        """
+        Set's is_active to False for the specific trade
+        :param data:
+        :return:
+        """
         async with websocket_exception_handler(self.socket) as socket:
             async with get_session() as session:
                 trade_id = data.get('trade_id', None)
@@ -135,10 +156,17 @@ class ConnectionManager:
                     raise DoesNotExist('Trade')
 
     async def relay_messages(self):
-        for m in self.pubsub.listen():
-            if m and m.get('type') == 'message':
-                print(m)
+        """
+        Reads messages from pubsub and sends back to client,
+        See orders_scanner to understand
+        :return:
+        """
+        while True:
+            for m in self.pubsub.listen():
+                if m and m.get('type') == 'message':
+                    print(m)
 
     async def disconnect(self, reason):
+        """Ends connection"""
         await self.socket.send_text(json.dumps({'m': 'disconnecting', 'r': reason}))
         await self.socket.close()

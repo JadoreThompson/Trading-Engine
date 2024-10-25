@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import argon2
 
 # Local
-from config import DB_ENGINE, API_KEY_ALIAS, ph
+from config import DB_ENGINE, ph
 from db_models import Users
 
 # SA
@@ -31,9 +31,9 @@ async def get_session():
 
 async def get_user(api_key: str) -> Users:
     """
-        Checks each account if the API Key matches
-        TODO: Improve efficiency for large system
-        :returns: user -> Users
+    Checks each account if the API Key matches
+    TODO: Improve efficiency for large system
+    :returns: user -> Users
     """
     async with get_session() as session:
         result = await session.execute(

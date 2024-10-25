@@ -1,27 +1,19 @@
 import asyncio
-import random
 import threading
-import time
 import ccxt
-from sqlalchemy import distinct, select
 
+# Local
 from config import REDIS_CLIENT
-from db_models import Orders
-from utils import get_session
 
-
-# In a thread for each ticker we run an async process that
-# is watching the price
 
 async def watch_price(ticker):
+    """Publishes ticker price to channel, triggers event"""
     exch = ccxt.binance()
     exch.load_markets()
     price = 0
 
     while True:
         try:
-            # print(type(exch.fetch_mark_price(ticker)))
-            # print(1)
             new_price = float(exch.fetch_mark_price(ticker).get('info', {}).get('indexPrice', None))
             if new_price > price:
                 price = new_price
@@ -38,7 +30,6 @@ def price_bridger(ticker):
 
 async def price_overseer():
     threads = []
-
     tickers = ['BTC/USDT', 'SOL/USDT', 'ETH/USDT']
 
     for ticker in tickers:

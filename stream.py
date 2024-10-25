@@ -14,6 +14,11 @@ stream = APIRouter(prefix='/socket', tags=['socket'])
 
 @stream.websocket('/trade')
 async def trade(websocket: WebSocket):
+    """
+    Allows user to send and receive trade updates
+    :param websocket:
+    :return:
+    """
     socket = ConnectionManager(websocket)
     await socket.connect()
     try:

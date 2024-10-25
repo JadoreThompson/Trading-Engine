@@ -19,4 +19,3 @@ DB_ENGINE = create_async_engine(DB_URI)
 
 import json
 REDIS_CLIENT = redis.Redis(host="localhost", db=0)
-# REDIS_CLIENT = 'redis://localhost:6379'
